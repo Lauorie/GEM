@@ -9,8 +9,8 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 TRAIN_TOKENIZED_FILE=${TRAIN_TOKENIZED_FILE:-"./data/qwen3_merged_weak/train_tokenized.jsonl"}
 TEST_TOKENIZED_FILE=${TEST_TOKENIZED_FILE:-""}
 
-MODEL_NAME_OR_PATH=${MODEL_NAME_OR_PATH:-"Qwen/Qwen3-8B"}
-TOKENIZER_NAME_OR_PATH=${TOKENIZER_NAME_OR_PATH:-"Qwen/Qwen3-8B"}
+MODEL_NAME_OR_PATH=${MODEL_NAME_OR_PATH:-"/root/autodl-fs/models/Qwen3-8B"}
+TOKENIZER_NAME_OR_PATH=${TOKENIZER_NAME_OR_PATH:-"/root/autodl-fs/models/Qwen3-8B"}
 OUTPUT_DIR=${OUTPUT_DIR:-"./log/qwen3-8b-merged-weak-gem-$(date "+%Y-%m-%d-%H-%M-%S")"}
 
 DEEPSPEED_CONFIG=${DEEPSPEED_CONFIG:-"scripts/zero3.json"}
