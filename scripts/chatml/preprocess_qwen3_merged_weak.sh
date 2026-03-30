@@ -3,7 +3,7 @@
 set -euo pipefail
 set -x
 
-export RAW_TRAIN_FILE="${RAW_TRAIN_FILE:-/root/app/merged_weak.json}"
+export RAW_TRAIN_FILE="${RAW_TRAIN_FILE:-/root/autodl-fs/models/merged_weak.json}"
 export RAW_EVAL_FILE="${RAW_EVAL_FILE:-""}"
 
 export TOKENIZER_NAME_OR_PATH="${TOKENIZER_NAME_OR_PATH:-Qwen/Qwen3-8B}"

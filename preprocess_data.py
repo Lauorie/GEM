@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 from glob import glob
 from multiprocessing import Pool
 
@@ -290,20 +291,45 @@ def extract_input_ids(chat_template_output):
     return input_ids.to(dtype=torch.long)
 
 
-def apply_chat_template_tensor(messages, add_generation_prompt=False):
-    apply_kwargs = dict(
-        conversation=messages,
-        tokenize=True,
+def strip_rendered_think_content(rendered_text):
+    # Qwen3 may inject empty think blocks even when enable_thinking=False.
+    rendered_text = re.sub(
+        r"<think>\s*</think>\s*",
+        "",
+        rendered_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if args.strip_think_tags:
+        rendered_text = rendered_text.replace("<think>", "").replace("</think>", "")
+    return rendered_text
+
+
+def tokenize_rendered_text(rendered_text):
+    tokenized_output = tokenizer(
+        rendered_text,
+        add_special_tokens=False,
         return_tensors="pt",
         padding=False,
         truncation=True,
         max_length=max_seq_length,
+    )
+    return extract_input_ids(tokenized_output)
+
+
+def apply_chat_template_tensor(messages, add_generation_prompt=False):
+    apply_kwargs = dict(
+        conversation=messages,
+        tokenize=False,
         add_generation_prompt=add_generation_prompt,
     )
     if args.disable_thinking:
         apply_kwargs["enable_thinking"] = False
-    chat_template_output = tokenizer.apply_chat_template(**apply_kwargs)
-    return extract_input_ids(chat_template_output)
+    rendered_text = tokenizer.apply_chat_template(**apply_kwargs)
+    if not isinstance(rendered_text, str):
+        rendered_text = str(rendered_text)
+    if args.disable_thinking or args.strip_think_tags:
+        rendered_text = strip_rendered_think_content(rendered_text)
+    return tokenize_rendered_text(rendered_text)
 
 
 input_data = load_input_data()
