@@ -24,7 +24,7 @@ class SFTTrainer(Trainer):
         shift_labels = shift_labels[mask]
 
         training_logs = {}
-        if self.args.print_entropy:
+        if getattr(self.args, "print_entropy", False):
             entropy = chunked_entropy_from_logits(
                 shift_logits,
                 batch_size=max(1, shift_logits.size(0) // 4),

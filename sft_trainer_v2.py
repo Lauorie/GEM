@@ -102,11 +102,13 @@ class SFTTrainer(Trainer):
 
         Subclass and override for custom behavior.
         """
-        if (self.label_smoother is not None or self.compute_loss_func is not None) and "labels" in inputs:
+        compute_loss_func = getattr(self, "compute_loss_func", None)
+        model_accepts_loss_kwargs = getattr(self, "model_accepts_loss_kwargs", False)
+        if (self.label_smoother is not None or compute_loss_func is not None) and "labels" in inputs:
             labels = inputs.pop("labels")
         else:
             labels = None
-        if self.model_accepts_loss_kwargs:
+        if model_accepts_loss_kwargs:
             loss_kwargs = {}
             if num_items_in_batch is not None:
                 loss_kwargs["num_items_in_batch"] = num_items_in_batch
@@ -125,8 +127,8 @@ class SFTTrainer(Trainer):
             else:
                 model_name = unwrapped_model._get_name()
             # User-defined compute_loss function
-            if self.compute_loss_func is not None:
-                loss = self.compute_loss_func(outputs, labels, num_items_in_batch=num_items_in_batch)
+            if compute_loss_func is not None:
+                loss = compute_loss_func(outputs, labels, num_items_in_batch=num_items_in_batch)
             elif model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
                 loss = self.label_smoother(outputs, labels, shift_labels=True)
             else:
@@ -157,7 +159,7 @@ class SFTTrainer(Trainer):
                     h=self.args.gem_h
                 )
 
-        if getattr(self.args, "average_tokens_across_devices", False) and self.model_accepts_loss_kwargs:
+        if getattr(self.args, "average_tokens_across_devices", False) and model_accepts_loss_kwargs:
             loss *= self.accelerator.num_processes
 
         # ziniu add logs
