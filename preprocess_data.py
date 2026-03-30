@@ -88,6 +88,16 @@ parser.add_argument(
 )
 parser.add_argument("--max_seq_length", type=int, default=4096)
 parser.add_argument("--preprocessing_num_workers", type=int, default=64)
+parser.add_argument(
+    "--disable_thinking",
+    action="store_true",
+    help="Disable tokenizer-specific thinking mode (for example Qwen3 enable_thinking=False).",
+)
+parser.add_argument(
+    "--strip_think_tags",
+    action="store_true",
+    help="Remove literal <think> and </think> tags from message content before tokenization.",
+)
 args = parser.parse_args()
 
 tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
@@ -186,6 +196,8 @@ def normalize_messages(example):
             raise TypeError(
                 f"Content at message index {message_idx} must be a string, got {type(content)}."
             )
+        if args.strip_think_tags:
+            content = content.replace("<think>", "").replace("</think>", "")
         normalized_messages.append({"role": role, "content": content})
     return normalized_messages
 
@@ -208,7 +220,7 @@ def extract_input_ids(chat_template_output):
 
 
 def apply_chat_template_tensor(messages, add_generation_prompt=False):
-    chat_template_output = tokenizer.apply_chat_template(
+    apply_kwargs = dict(
         conversation=messages,
         tokenize=True,
         return_tensors="pt",
@@ -217,6 +229,9 @@ def apply_chat_template_tensor(messages, add_generation_prompt=False):
         max_length=max_seq_length,
         add_generation_prompt=add_generation_prompt,
     )
+    if args.disable_thinking:
+        apply_kwargs["enable_thinking"] = False
+    chat_template_output = tokenizer.apply_chat_template(**apply_kwargs)
     return extract_input_ids(chat_template_output)
 
 

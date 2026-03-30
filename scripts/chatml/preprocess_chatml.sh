@@ -22,6 +22,7 @@ MESSAGES_KEY=${MESSAGES_KEY:-"messages"}
 ROLE_KEY=${ROLE_KEY:-"role"}
 CONTENT_KEY=${CONTENT_KEY:-"content"}
 JSON_FIELD=${JSON_FIELD:-""}
+DISABLE_THINKING=${DISABLE_THINKING:-1}
 
 SHUFFLE_BEFORE_SPLIT=${SHUFFLE_BEFORE_SPLIT:-0}
 SEED=${SEED:-42}
@@ -44,6 +45,10 @@ COMMON_ARGS=(
 
 if [[ -n "$JSON_FIELD" ]]; then
     COMMON_ARGS+=(--json_field "$JSON_FIELD")
+fi
+
+if [[ "$DISABLE_THINKING" == "1" ]]; then
+    COMMON_ARGS+=(--disable_thinking)
 fi
 
 if [[ "$SHUFFLE_BEFORE_SPLIT" == "1" ]]; then

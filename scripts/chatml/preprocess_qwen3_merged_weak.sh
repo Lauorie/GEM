@@ -17,6 +17,8 @@ export MESSAGES_KEY="${MESSAGES_KEY:-messages}"
 export ROLE_KEY="${ROLE_KEY:-role}"
 export CONTENT_KEY="${CONTENT_KEY:-content}"
 export JSON_FIELD="${JSON_FIELD:-""}"
+export DISABLE_THINKING="${DISABLE_THINKING:-1}"
+export STRIP_THINK_TAGS="${STRIP_THINK_TAGS:-1}"
 
 export SHUFFLE_BEFORE_SPLIT="${SHUFFLE_BEFORE_SPLIT:-0}"
 export SEED="${SEED:-42}"

@@ -446,6 +446,13 @@ bash scripts/chatml/train_gem_8xa800.sh
 - `scripts/chatml/preprocess_qwen3_merged_weak.sh`
 - `scripts/chatml/train_gem_qwen3_8b_merged_weak.sh`
 
+另外，针对你提到的 Qwen3 会自动注入 `<think>...</think>` 的问题，当前预处理流程已经默认：
+
+- 向 Qwen3 chat template 显式传入 `enable_thinking=False`
+- 对原始消息内容中的 `<think>` / `</think>` 做清理
+
+也就是说，这套训练数据不会主动保留或注入任何 think 标签。
+
 ### 8.1.1 如果 `merged_weak.json` 就是完整训练集
 
 只做训练集预处理：
