@@ -174,7 +174,17 @@ class SFTTrainer(Trainer):
 
         return (loss, outputs) if return_outputs else loss
 
-    def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time):
+    def _maybe_log_save_evaluate(
+        self,
+        tr_loss,
+        grad_norm,
+        model,
+        trial,
+        epoch,
+        ignore_keys_for_eval,
+        start_time=None,
+        **kwargs,
+    ):
         if self.control.should_log and self.state.global_step > self._globalstep_last_logged:
             if is_torch_xla_available():
                 xm.mark_step()
@@ -198,7 +208,13 @@ class SFTTrainer(Trainer):
             self._globalstep_last_logged = self.state.global_step
             self.store_flos()
 
-            self.log(logs, start_time)
+            learning_rate = kwargs.get("learning_rate")
+            if learning_rate is not None:
+                logs["learning_rate"] = learning_rate
+            if start_time is not None:
+                self.log(logs, start_time)
+            else:
+                self.log(logs)
 
         metrics = None
         if self.control.should_evaluate:

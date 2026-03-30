@@ -142,7 +142,14 @@ class SFTTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     def _maybe_log_save_evaluate(
-        self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval
+        self,
+        tr_loss,
+        grad_norm,
+        model,
+        trial,
+        epoch,
+        ignore_keys_for_eval,
+        **kwargs,
     ):
         if (
             self.control.should_log
