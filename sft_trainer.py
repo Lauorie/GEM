@@ -161,7 +161,10 @@ class SFTTrainer(Trainer):
             logs: Dict[str, float] = {}
 
             # all_gather + mean() to get average loss over all processes
-            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+            if hasattr(self, "_nested_gather"):
+                tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+            else:
+                tr_loss_scalar = tr_loss.detach().mean().item()
 
             # reset tr_loss to zero
             tr_loss -= tr_loss

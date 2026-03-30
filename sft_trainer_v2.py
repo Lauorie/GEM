@@ -191,8 +191,14 @@ class SFTTrainer(Trainer):
 
             logs: Dict[str, float] = {}
 
-            # all_gather + mean() to get average loss over all processes
-            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+            # Newer Trainer internals can rename/remove private helpers like
+            # `_nested_gather`. Fall back to the local process loss so logging
+            # stays functional instead of aborting training.
+            nested_gather = getattr(self, "_nested_gather", None)
+            if callable(nested_gather):
+                tr_loss_scalar = nested_gather(tr_loss).mean().item()
+            else:
+                tr_loss_scalar = tr_loss.detach().float().mean().item()
 
             # reset tr_loss to zero
             tr_loss -= tr_loss
