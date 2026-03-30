@@ -102,11 +102,13 @@ class SFTTrainer(Trainer):
 
         Subclass and override for custom behavior.
         """
-        if (self.label_smoother is not None or self.compute_loss_func is not None) and "labels" in inputs:
+        compute_loss_func = getattr(self, "compute_loss_func", None)
+        model_accepts_loss_kwargs = getattr(self, "model_accepts_loss_kwargs", False)
+        if (self.label_smoother is not None or compute_loss_func is not None) and "labels" in inputs:
             labels = inputs.pop("labels")
         else:
             labels = None
-        if self.model_accepts_loss_kwargs:
+        if model_accepts_loss_kwargs:
             loss_kwargs = {}
             if num_items_in_batch is not None:
                 loss_kwargs["num_items_in_batch"] = num_items_in_batch
@@ -114,8 +116,9 @@ class SFTTrainer(Trainer):
         outputs = model(**inputs)
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
-        if self.args.past_index >= 0:
-            self._past = outputs[self.args.past_index]
+        past_index = getattr(self.args, "past_index", -1)
+        if past_index >= 0:
+            self._past = outputs[past_index]
 
         if labels is not None:
             unwrapped_model = self.accelerator.unwrap_model(model)
@@ -124,8 +127,8 @@ class SFTTrainer(Trainer):
             else:
                 model_name = unwrapped_model._get_name()
             # User-defined compute_loss function
-            if self.compute_loss_func is not None:
-                loss = self.compute_loss_func(outputs, labels, num_items_in_batch=num_items_in_batch)
+            if compute_loss_func is not None:
+                loss = compute_loss_func(outputs, labels, num_items_in_batch=num_items_in_batch)
             elif model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
                 loss = self.label_smoother(outputs, labels, shift_labels=True)
             else:
@@ -156,7 +159,7 @@ class SFTTrainer(Trainer):
                     h=self.args.gem_h
                 )
 
-        if self.args.average_tokens_across_devices and self.model_accepts_loss_kwargs:
+        if getattr(self.args, "average_tokens_across_devices", False) and model_accepts_loss_kwargs:
             loss *= self.accelerator.num_processes
 
         # ziniu add logs
@@ -171,15 +174,31 @@ class SFTTrainer(Trainer):
 
         return (loss, outputs) if return_outputs else loss
 
-    def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time):
+    def _maybe_log_save_evaluate(
+        self,
+        tr_loss,
+        grad_norm,
+        model,
+        trial,
+        epoch,
+        ignore_keys_for_eval,
+        start_time=None,
+        **kwargs,
+    ):
         if self.control.should_log and self.state.global_step > self._globalstep_last_logged:
             if is_torch_xla_available():
                 xm.mark_step()
 
             logs: Dict[str, float] = {}
 
-            # all_gather + mean() to get average loss over all processes
-            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+            # Newer Trainer internals can rename/remove private helpers like
+            # `_nested_gather`. Fall back to the local process loss so logging
+            # stays functional instead of aborting training.
+            nested_gather = getattr(self, "_nested_gather", None)
+            if callable(nested_gather):
+                tr_loss_scalar = nested_gather(tr_loss).mean().item()
+            else:
+                tr_loss_scalar = tr_loss.detach().float().mean().item()
 
             # reset tr_loss to zero
             tr_loss -= tr_loss
@@ -195,7 +214,13 @@ class SFTTrainer(Trainer):
             self._globalstep_last_logged = self.state.global_step
             self.store_flos()
 
-            self.log(logs, start_time)
+            learning_rate = kwargs.get("learning_rate")
+            if learning_rate is not None:
+                logs["learning_rate"] = learning_rate
+            if start_time is not None:
+                self.log(logs, start_time)
+            else:
+                self.log(logs)
 
         metrics = None
         if self.control.should_evaluate:

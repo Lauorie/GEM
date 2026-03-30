@@ -10,6 +10,7 @@ import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 import sys
+import inspect
 from typing import Optional
 from functools import partial
 import datasets
@@ -63,6 +64,12 @@ class ModelArguments:
         metadata={
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         }
+    )
+    tokenizer_name_or_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Optional tokenizer path. Defaults to model_name_or_path when unset."
+        },
     )
     cache_dir: Optional[str] = field(
         default=None,
@@ -148,7 +155,42 @@ def main():
             json_file=os.path.abspath(sys.argv[1])
         )
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        # Different transformers versions expose slightly different CLI field names
+        # (for example eval_strategy vs evaluation_strategy). Normalize a few common
+        # aliases so the training scripts remain portable across environments.
+        normalized_argv = [sys.argv[0]]
+        parser_signature = inspect.signature(parser.parse_args_into_dataclasses)
+        supports_return_remaining = (
+            "return_remaining_strings" in parser_signature.parameters
+        )
+        arg_aliases = {
+            "--evaluation_strategy": "--eval_strategy",
+        }
+        skip_flags = {"--overwrite_output_dir"}
+        argv_iter = iter(sys.argv[1:])
+        for arg in argv_iter:
+            normalized_arg = arg_aliases.get(arg, arg)
+            if normalized_arg in skip_flags:
+                continue
+            normalized_argv.append(normalized_arg)
+        if supports_return_remaining:
+            model_args, data_args, training_args, remaining_args = (
+                parser.parse_args_into_dataclasses(
+                    args=normalized_argv[1:],
+                    return_remaining_strings=True,
+                )
+            )
+            if remaining_args:
+                raise ValueError(
+                    "Some specified arguments are not used by the HfArgumentParser: "
+                    f"{remaining_args}"
+                )
+            training_args.overwrite_output_dir = "--overwrite_output_dir" in sys.argv[1:]
+        else:
+            model_args, data_args, training_args = parser.parse_args_into_dataclasses(
+                args=normalized_argv[1:]
+            )
+            training_args.overwrite_output_dir = "--overwrite_output_dir" in sys.argv[1:]
 
     # Setup logging
     logging.basicConfig(
@@ -178,7 +220,10 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+    tokenizer_name_or_path = (
+        model_args.tokenizer_name_or_path or model_args.model_name_or_path
+    )
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
     if "llama-3" in tokenizer.name_or_path.lower() and tokenizer.pad_token is None:
         tokenizer.pad_token_id = len(tokenizer) - 1
         tokenizer.pad_token = tokenizer.decode(tokenizer.pad_token_id)
@@ -214,18 +259,24 @@ def main():
     # here we use a custom trainer that moves the model to CPU when saving the checkpoint in FSDP mode
     # we can switch to the default trainer after moving to deepspeed (let's don't change too much for now)
 
-    trainer = SFTTrainer(
+    trainer_kwargs = dict(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=test_dataset,
-        tokenizer=tokenizer,
         data_collator=DataCollatorForSeq2Seq(
             tokenizer=tokenizer, model=model, padding="longest"
         ),
         preprocess_logits_for_metrics=None,
         compute_metrics=None,
     )
+    trainer_init_signature = inspect.signature(SFTTrainer.__init__)
+    if "tokenizer" in trainer_init_signature.parameters:
+        trainer_kwargs["tokenizer"] = tokenizer
+    elif "processing_class" in trainer_init_signature.parameters:
+        trainer_kwargs["processing_class"] = tokenizer
+
+    trainer = SFTTrainer(**trainer_kwargs)
 
     # Training
     logger.info("*** Train ***")

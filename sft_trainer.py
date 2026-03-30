@@ -24,7 +24,7 @@ class SFTTrainer(Trainer):
         shift_labels = shift_labels[mask]
 
         training_logs = {}
-        if self.args.print_entropy:
+        if getattr(self.args, "print_entropy", False):
             entropy = chunked_entropy_from_logits(
                 shift_logits,
                 batch_size=max(1, shift_logits.size(0) // 4),
@@ -98,8 +98,9 @@ class SFTTrainer(Trainer):
         outputs = model(**inputs)
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
-        if self.args.past_index >= 0:
-            self._past = outputs[self.args.past_index]
+        past_index = getattr(self.args, "past_index", -1)
+        if past_index >= 0:
+            self._past = outputs[past_index]
 
         if labels is not None:
             unwrapped_model = self.accelerator.unwrap_model(model)
@@ -141,7 +142,14 @@ class SFTTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     def _maybe_log_save_evaluate(
-        self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval
+        self,
+        tr_loss,
+        grad_norm,
+        model,
+        trial,
+        epoch,
+        ignore_keys_for_eval,
+        **kwargs,
     ):
         if (
             self.control.should_log
@@ -153,7 +161,10 @@ class SFTTrainer(Trainer):
             logs: Dict[str, float] = {}
 
             # all_gather + mean() to get average loss over all processes
-            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+            if hasattr(self, "_nested_gather"):
+                tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+            else:
+                tr_loss_scalar = tr_loss.detach().mean().item()
 
             # reset tr_loss to zero
             tr_loss -= tr_loss
