@@ -190,6 +190,36 @@ def normalize_messages(example):
     return normalized_messages
 
 
+def extract_input_ids(chat_template_output):
+    if isinstance(chat_template_output, torch.Tensor):
+        input_ids = chat_template_output
+    elif hasattr(chat_template_output, "input_ids"):
+        input_ids = chat_template_output["input_ids"]
+    elif isinstance(chat_template_output, dict) and "input_ids" in chat_template_output:
+        input_ids = chat_template_output["input_ids"]
+    else:
+        input_ids = chat_template_output
+
+    if not isinstance(input_ids, torch.Tensor):
+        input_ids = torch.tensor(input_ids, dtype=torch.long)
+    if input_ids.ndim == 1:
+        input_ids = input_ids.unsqueeze(0)
+    return input_ids.to(dtype=torch.long)
+
+
+def apply_chat_template_tensor(messages, add_generation_prompt=False):
+    chat_template_output = tokenizer.apply_chat_template(
+        conversation=messages,
+        tokenize=True,
+        return_tensors="pt",
+        padding=False,
+        truncation=True,
+        max_length=max_seq_length,
+        add_generation_prompt=add_generation_prompt,
+    )
+    return extract_input_ids(chat_template_output)
+
+
 input_data = load_input_data()
 if len(input_data) == 0:
     raise ValueError("No input examples selected after applying start/end.")
@@ -202,15 +232,7 @@ def encode_sft_example(example):
     includes role/content fields.
     """
     messages = normalize_messages(example)
-    input_ids = tokenizer.apply_chat_template(
-        conversation=messages,
-        tokenize=True,
-        return_tensors="pt",
-        padding=False,
-        truncation=True,
-        max_length=max_seq_length,
-        add_generation_prompt=False,
-    )
+    input_ids = apply_chat_template_tensor(messages, add_generation_prompt=False)
     labels = input_ids.clone()
     # Mask all non-assistant segments so GEM/CE only trains on assistant responses.
     for message_idx, message in enumerate(messages):
@@ -218,36 +240,21 @@ def encode_sft_example(example):
             if message_idx == 0:
                 message_start_idx = 0
             else:
-                message_start_idx = tokenizer.apply_chat_template(
-                    conversation=messages[:message_idx],
-                    tokenize=True,
-                    return_tensors="pt",
-                    padding=False,
-                    truncation=True,
-                    max_length=max_seq_length,
+                message_start_idx = apply_chat_template_tensor(
+                    messages[:message_idx],
                     add_generation_prompt=False,
                 ).shape[1]
             if (
                 message_idx < len(messages) - 1
                 and messages[message_idx + 1]["role"] == "assistant"
             ):
-                message_end_idx = tokenizer.apply_chat_template(
-                    conversation=messages[: message_idx + 1],
-                    tokenize=True,
-                    return_tensors="pt",
-                    padding=False,
-                    truncation=True,
-                    max_length=max_seq_length,
+                message_end_idx = apply_chat_template_tensor(
+                    messages[: message_idx + 1],
                     add_generation_prompt=True,
                 ).shape[1]
             else:
-                message_end_idx = tokenizer.apply_chat_template(
-                    conversation=messages[: message_idx + 1],
-                    tokenize=True,
-                    return_tensors="pt",
-                    padding=False,
-                    truncation=True,
-                    max_length=max_seq_length,
+                message_end_idx = apply_chat_template_tensor(
+                    messages[: message_idx + 1],
                     add_generation_prompt=False,
                 ).shape[1]
             labels[:, message_start_idx:message_end_idx] = -100

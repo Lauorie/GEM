@@ -37,6 +37,7 @@ GEM_H=${GEM_H:-"logsigmoid"}
 REPORT_TO=${REPORT_TO:-"tensorboard"}
 GRADIENT_CHECKPOINTING=${GRADIENT_CHECKPOINTING:-True}
 BF16=${BF16:-True}
+USE_FLASH_ATTN=${USE_FLASH_ATTN:-False}
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -65,6 +66,7 @@ TRAIN_ARGS=(
     --gradient_checkpointing "$GRADIENT_CHECKPOINTING"
     --overwrite_output_dir
     --bf16 "$BF16"
+    --use_flash_attn "$USE_FLASH_ATTN"
 )
 
 if [[ -n "$TEST_TOKENIZED_FILE" ]]; then
