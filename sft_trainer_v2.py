@@ -114,8 +114,9 @@ class SFTTrainer(Trainer):
         outputs = model(**inputs)
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
-        if self.args.past_index >= 0:
-            self._past = outputs[self.args.past_index]
+        past_index = getattr(self.args, "past_index", -1)
+        if past_index >= 0:
+            self._past = outputs[past_index]
 
         if labels is not None:
             unwrapped_model = self.accelerator.unwrap_model(model)
@@ -156,7 +157,7 @@ class SFTTrainer(Trainer):
                     h=self.args.gem_h
                 )
 
-        if self.args.average_tokens_across_devices and self.model_accepts_loss_kwargs:
+        if getattr(self.args, "average_tokens_across_devices", False) and self.model_accepts_loss_kwargs:
             loss *= self.accelerator.num_processes
 
         # ziniu add logs
