@@ -339,7 +339,12 @@ TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl TEST_TOKENIZED_FILE=./d
 例如：
 
 ```bash
-TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl MODEL_NAME_OR_PATH=meta-llama/Llama-3.1-8B TOKENIZER_NAME_OR_PATH=meta-llama/Llama-3.1-8B-Instruct PER_DEVICE_TRAIN_BATCH_SIZE=1 GRADIENT_ACCUMULATION_STEPS=16 bash scripts/chatml/train_gem_8xa800.sh
+TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl \
+MODEL_NAME_OR_PATH=meta-llama/Llama-3.1-8B \
+TOKENIZER_NAME_OR_PATH=meta-llama/Llama-3.1-8B-Instruct \
+PER_DEVICE_TRAIN_BATCH_SIZE=1 \
+GRADIENT_ACCUMULATION_STEPS=16 \
+bash scripts/chatml/train_gem_8xa800.sh
 ```
 
 ### 6.5 如果你想用 Triton GEM
@@ -347,7 +352,11 @@ TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl MODEL_NAME_OR_PATH=meta
 直接覆盖 loss：
 
 ```bash
-TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl MODEL_NAME_OR_PATH=meta-llama/Llama-3.1-8B TOKENIZER_NAME_OR_PATH=meta-llama/Llama-3.1-8B-Instruct LOSS=gem_triton bash scripts/chatml/train_gem_8xa800.sh
+TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl \
+MODEL_NAME_OR_PATH=meta-llama/Llama-3.1-8B \
+TOKENIZER_NAME_OR_PATH=meta-llama/Llama-3.1-8B-Instruct \
+LOSS=gem_triton \
+bash scripts/chatml/train_gem_8xa800.sh
 ```
 
 ---
@@ -401,16 +410,99 @@ TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl MODEL_NAME_OR_PATH=meta
 ### 第二步：预处理
 
 ```bash
-RAW_TRAIN_FILE=./data/chatml/train.json RAW_EVAL_FILE=./data/chatml/eval.json TOKENIZER_NAME_OR_PATH=meta-llama/Llama-3.1-8B-Instruct MAX_SEQ_LENGTH=4096 PREPROCESSING_NUM_WORKERS=32 bash scripts/chatml/preprocess_chatml.sh
+RAW_TRAIN_FILE=./data/chatml/train.json \
+RAW_EVAL_FILE=./data/chatml/eval.json \
+TOKENIZER_NAME_OR_PATH=meta-llama/Llama-3.1-8B-Instruct \
+MAX_SEQ_LENGTH=4096 \
+PREPROCESSING_NUM_WORKERS=32 \
+bash scripts/chatml/preprocess_chatml.sh
 ```
 
 ### 第三步：8 卡 GEM 训练
 
 ```bash
-TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl TEST_TOKENIZED_FILE=./data/chatml/eval_tokenized.jsonl MODEL_NAME_OR_PATH=meta-llama/Llama-3.1-8B TOKENIZER_NAME_OR_PATH=meta-llama/Llama-3.1-8B-Instruct PER_DEVICE_TRAIN_BATCH_SIZE=2 GRADIENT_ACCUMULATION_STEPS=8 NUM_TRAIN_EPOCHS=3 LOSS=gem bash scripts/chatml/train_gem_8xa800.sh
+TRAIN_TOKENIZED_FILE=./data/chatml/train_tokenized.jsonl \
+TEST_TOKENIZED_FILE=./data/chatml/eval_tokenized.jsonl \
+MODEL_NAME_OR_PATH=meta-llama/Llama-3.1-8B \
+TOKENIZER_NAME_OR_PATH=meta-llama/Llama-3.1-8B-Instruct \
+PER_DEVICE_TRAIN_BATCH_SIZE=2 \
+GRADIENT_ACCUMULATION_STEPS=8 \
+NUM_TRAIN_EPOCHS=3 \
+LOSS=gem \
+bash scripts/chatml/train_gem_8xa800.sh
 ```
 
 ---
+
+## 8.1 你的场景：Qwen3-8B + /root/app/merged_weak.json
+
+如果你当前要训练的就是：
+
+- 模型：`Qwen/Qwen3-8B`
+- 数据：`/root/app/merged_weak.json`
+
+仓库里已经补了两个可以直接用的专用脚本：
+
+- `scripts/chatml/preprocess_qwen3_merged_weak.sh`
+- `scripts/chatml/train_gem_qwen3_8b_merged_weak.sh`
+
+### 8.1.1 如果 `merged_weak.json` 就是完整训练集
+
+只做训练集预处理：
+
+```bash
+TRAIN_END="" \
+EVAL_END="" \
+bash scripts/chatml/preprocess_qwen3_merged_weak.sh
+```
+
+然后训练：
+
+```bash
+TRAIN_TOKENIZED_FILE=./data/qwen3_merged_weak/train_tokenized.jsonl \
+TEST_TOKENIZED_FILE="" \
+bash scripts/chatml/train_gem_qwen3_8b_merged_weak.sh
+```
+
+### 8.1.2 如果你想从同一个文件切分训练集和验证集
+
+例如把前 9800 条作为训练集，后 200 条作为验证集：
+
+```bash
+SHUFFLE_BEFORE_SPLIT=1 \
+SEED=42 \
+TRAIN_START=0 \
+TRAIN_END=9800 \
+EVAL_START=9800 \
+EVAL_END=10000 \
+bash scripts/chatml/preprocess_qwen3_merged_weak.sh
+```
+
+然后训练：
+
+```bash
+bash scripts/chatml/train_gem_qwen3_8b_merged_weak.sh
+```
+
+### 8.1.3 如果你想手动调训练规模
+
+例如更保守一点的 8 卡配置：
+
+```bash
+PER_DEVICE_TRAIN_BATCH_SIZE=1 \
+GRADIENT_ACCUMULATION_STEPS=16 \
+NUM_TRAIN_EPOCHS=3 \
+LOSS=gem \
+bash scripts/chatml/train_gem_qwen3_8b_merged_weak.sh
+```
+
+### 8.1.4 输出位置
+
+默认输出目录：
+
+- 预处理训练集：`./data/qwen3_merged_weak/train_tokenized.jsonl`
+- 预处理验证集：`./data/qwen3_merged_weak/eval_tokenized.jsonl`
+- 训练日志与 checkpoint：`./log/qwen3-8b-merged-weak-gem-时间戳`
 
 ## 9. 常见问题
 
