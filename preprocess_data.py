@@ -1,5 +1,6 @@
 import json
 import os
+import random
 from glob import glob
 from multiprocessing import Pool
 
@@ -121,6 +122,71 @@ def resolve_local_data_files(dataset_name_or_path):
     return None
 
 
+def normalize_loaded_records(records, data_file):
+    if isinstance(records, dict):
+        records = [records]
+    if not isinstance(records, list):
+        raise TypeError(
+            f"Expected parsed data from {data_file} to be a list or dict, got {type(records)}."
+        )
+    normalized_records = []
+    for record_idx, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise TypeError(
+                f"Record {record_idx} from {data_file} must be a dict, got {type(record)}."
+            )
+        normalized_records.append(record)
+    return normalized_records
+
+
+def extract_json_field(record_or_records, data_file):
+    if args.json_field is None:
+        return record_or_records
+    if not isinstance(record_or_records, dict):
+        raise TypeError(
+            f"--json_field={args.json_field} requires the parsed object from {data_file} "
+            f"to be a dict, got {type(record_or_records)}."
+        )
+    if args.json_field not in record_or_records:
+        raise KeyError(
+            f"Cannot find json field '{args.json_field}' in {data_file}. "
+            f"Available keys: {list(record_or_records.keys())}"
+        )
+    return record_or_records[args.json_field]
+
+
+def load_local_json_records(data_files):
+    records = []
+    for data_file in data_files:
+        if data_file.endswith(".jsonl"):
+            with open(data_file, "r", encoding="utf-8") as jsonl_reader:
+                for line_idx, line in enumerate(jsonl_reader, start=1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        parsed_line = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(
+                            f"Failed to parse JSONL line {line_idx} from {data_file}: {exc}"
+                        ) from exc
+                    extracted = extract_json_field(parsed_line, f"{data_file}:{line_idx}")
+                    records.extend(
+                        normalize_loaded_records(extracted, f"{data_file}:{line_idx}")
+                    )
+        else:
+            with open(data_file, "r", encoding="utf-8") as json_reader:
+                try:
+                    parsed_json = json.load(json_reader)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Failed to parse JSON file {data_file}: {exc}"
+                    ) from exc
+            extracted = extract_json_field(parsed_json, data_file)
+            records.extend(normalize_loaded_records(extracted, data_file))
+    return records
+
+
 def load_input_data():
     local_data_files = resolve_local_data_files(args.dataset_name_or_path)
     use_local_json = args.dataset_format == "json" or (
@@ -136,11 +202,7 @@ def load_input_data():
             print(
                 f"warning: --split={args.split} is ignored for local JSON/JSONL files."
             )
-        input_data = load_dataset(
-            "json",
-            data_files={"train": local_data_files},
-            field=args.json_field,
-        )["train"]
+        input_data = load_local_json_records(local_data_files)
         data_source = f"local JSON/JSONL files: {', '.join(local_data_files)}"
     else:
         input_data = load_dataset(args.dataset_name_or_path)
@@ -148,15 +210,24 @@ def load_input_data():
             input_data = input_data[args.split]
         data_source = f"HuggingFace dataset {args.dataset_name_or_path}, split={args.split}"
 
-    if args.shuffle:
-        input_data = input_data.shuffle(seed=args.seed)
-
-    end = len(input_data) if args.end is None else min(args.end, len(input_data))
-    if args.start < 0 or args.start > end:
-        raise ValueError(
-            f"Invalid slice range: start={args.start}, end={end}, len={len(input_data)}."
-        )
-    input_data = input_data.select(range(args.start, end))
+    if use_local_json:
+        if args.shuffle:
+            random.Random(args.seed).shuffle(input_data)
+        end = len(input_data) if args.end is None else min(args.end, len(input_data))
+        if args.start < 0 or args.start > end:
+            raise ValueError(
+                f"Invalid slice range: start={args.start}, end={end}, len={len(input_data)}."
+            )
+        input_data = input_data[args.start:end]
+    else:
+        if args.shuffle:
+            input_data = input_data.shuffle(seed=args.seed)
+        end = len(input_data) if args.end is None else min(args.end, len(input_data))
+        if args.start < 0 or args.start > end:
+            raise ValueError(
+                f"Invalid slice range: start={args.start}, end={end}, len={len(input_data)}."
+            )
+        input_data = input_data.select(range(args.start, end))
     print(f"load input data from {data_source} done. len(input_data): {len(input_data)}")
     return input_data
 
