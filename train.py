@@ -64,6 +64,12 @@ class ModelArguments:
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         }
     )
+    tokenizer_name_or_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Optional tokenizer path. Defaults to model_name_or_path when unset."
+        },
+    )
     cache_dir: Optional[str] = field(
         default=None,
         metadata={
@@ -178,7 +184,10 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+    tokenizer_name_or_path = (
+        model_args.tokenizer_name_or_path or model_args.model_name_or_path
+    )
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
     if "llama-3" in tokenizer.name_or_path.lower() and tokenizer.pad_token is None:
         tokenizer.pad_token_id = len(tokenizer) - 1
         tokenizer.pad_token = tokenizer.decode(tokenizer.pad_token_id)

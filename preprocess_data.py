@@ -1,26 +1,41 @@
 import json
 import os
+from glob import glob
+from multiprocessing import Pool
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 import torch
 
-from datasets import load_dataset
-
 from argparse import ArgumentParser
-from transformers import AutoTokenizer
-from multiprocessing import Pool
+from datasets import load_dataset
 from tqdm import tqdm
+from transformers import AutoTokenizer
 
 parser = ArgumentParser()
 parser.add_argument(
     "--dataset_name_or_path",
     type=str,
     default="HuggingFaceH4/ultrafeedback_binarized",
+    help="HuggingFace dataset name, or a local JSON/JSONL file or directory.",
+)
+parser.add_argument(
+    "--dataset_format",
+    type=str,
+    default="auto",
+    choices=["auto", "hf", "json"],
+    help="How to interpret dataset_name_or_path. Use auto to infer local JSON/JSONL paths.",
+)
+parser.add_argument(
+    "--json_field",
+    type=str,
+    default=None,
+    help="Optional top-level field name when loading a local JSON object file.",
 )
 parser.add_argument(
     "--split",
     type=str,
     default="train",
+    help="Split name for HuggingFace datasets. Ignored for local JSON/JSONL files.",
 )
 parser.add_argument(
     "--start",
@@ -33,53 +48,160 @@ parser.add_argument(
     default=None,
 )
 parser.add_argument(
+    "--messages_key",
+    type=str,
+    default="messages",
+    help="Column name that stores the ChatML message list.",
+)
+parser.add_argument(
+    "--role_key",
+    type=str,
+    default="role",
+    help="Key name for each message role.",
+)
+parser.add_argument(
+    "--content_key",
+    type=str,
+    default="content",
+    help="Key name for each message content.",
+)
+parser.add_argument(
+    "--shuffle",
+    action="store_true",
+    help="Shuffle the dataset before applying start/end slicing.",
+)
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=42,
+    help="Random seed used when --shuffle is enabled.",
+)
+parser.add_argument(
     "--output_file",
     type=str,
+    required=True,
 )
 parser.add_argument(
     "--tokenizer_name_or_path",
     type=str,
-    required=True
+    required=True,
 )
 parser.add_argument("--max_seq_length", type=int, default=4096)
 parser.add_argument("--preprocessing_num_workers", type=int, default=64)
 args = parser.parse_args()
 
 tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
+if getattr(tokenizer, "chat_template", None) is None:
+    raise ValueError(
+        f"Tokenizer {args.tokenizer_name_or_path} does not provide a chat template. "
+        "Please use a chat/instruct tokenizer for ChatML data."
+    )
 print(f"load tokenizer from {args.tokenizer_name_or_path} done.")
 max_seq_length = args.max_seq_length
 
-input_data = load_dataset(args.dataset_name_or_path)
-if args.split:
-    input_data = input_data[args.split]
-if args.end is None:
-    args.end = len(input_data)
-input_data = input_data.select(range(args.start, args.end))
-print(
-    f"load input data from {args.dataset_name_or_path} done. len(input_data): {len(input_data)}"
-)
+
+def resolve_local_data_files(dataset_name_or_path):
+    if os.path.isfile(dataset_name_or_path):
+        return [dataset_name_or_path]
+    if os.path.isdir(dataset_name_or_path):
+        data_files = []
+        for pattern in ("*.json", "*.jsonl"):
+            data_files.extend(sorted(glob(os.path.join(dataset_name_or_path, pattern))))
+        return data_files
+    return None
 
 
-def encode_sft_example(example, verbose=False):
-    """
-    This function encodes a single example into a format that can be used for sft training.
-    Here, we assume each example has a 'messages' field. Each message in it is a dict with 'role' and 'content' fields.
-    We use the `apply_chat_template` function from the tokenizer to tokenize the messages and prepare the input and label tensors.
-    """
-    messages = example["messages"]
+def load_input_data():
+    local_data_files = resolve_local_data_files(args.dataset_name_or_path)
+    use_local_json = args.dataset_format == "json" or (
+        args.dataset_format == "auto" and local_data_files
+    )
+
+    if use_local_json:
+        if not local_data_files:
+            raise ValueError(
+                f"Cannot find local JSON/JSONL data under {args.dataset_name_or_path}."
+            )
+        if args.split not in ("", "train"):
+            print(
+                f"warning: --split={args.split} is ignored for local JSON/JSONL files."
+            )
+        input_data = load_dataset(
+            "json",
+            data_files={"train": local_data_files},
+            field=args.json_field,
+        )["train"]
+        data_source = f"local JSON/JSONL files: {', '.join(local_data_files)}"
+    else:
+        input_data = load_dataset(args.dataset_name_or_path)
+        if args.split:
+            input_data = input_data[args.split]
+        data_source = f"HuggingFace dataset {args.dataset_name_or_path}, split={args.split}"
+
+    if args.shuffle:
+        input_data = input_data.shuffle(seed=args.seed)
+
+    end = len(input_data) if args.end is None else min(args.end, len(input_data))
+    if args.start < 0 or args.start > end:
+        raise ValueError(
+            f"Invalid slice range: start={args.start}, end={end}, len={len(input_data)}."
+        )
+    input_data = input_data.select(range(args.start, end))
+    print(f"load input data from {data_source} done. len(input_data): {len(input_data)}")
+    return input_data
+
+
+def normalize_messages(example):
+    if args.messages_key not in example:
+        raise KeyError(
+            f"Cannot find messages key '{args.messages_key}' in example. "
+            f"Available keys: {list(example.keys())}"
+        )
+    messages = example[args.messages_key]
+    if not isinstance(messages, list):
+        raise TypeError(
+            f"Expected '{args.messages_key}' to be a list, got {type(messages)}."
+        )
     if len(messages) == 0:
         raise ValueError("messages field is empty.")
-    if verbose:
-        chat_messages = tokenizer.apply_chat_template(
-            conversation=messages,
-            tokenize=False,
-            return_tensors="pt",
-            padding=False,
-            truncation=True,
-            max_length=max_seq_length,
-            add_generation_prompt=False,
-        )
-        print(f"chat_messages:\n[{chat_messages}]")
+
+    normalized_messages = []
+    for message_idx, message in enumerate(messages):
+        if not isinstance(message, dict):
+            raise TypeError(
+                f"Message at index {message_idx} must be a dict, got {type(message)}."
+            )
+        if args.role_key not in message or args.content_key not in message:
+            raise KeyError(
+                f"Message at index {message_idx} must contain keys "
+                f"'{args.role_key}' and '{args.content_key}'."
+            )
+        role = message[args.role_key]
+        content = message[args.content_key]
+        if not isinstance(role, str):
+            raise TypeError(
+                f"Role at message index {message_idx} must be a string, got {type(role)}."
+            )
+        if not isinstance(content, str):
+            raise TypeError(
+                f"Content at message index {message_idx} must be a string, got {type(content)}."
+            )
+        normalized_messages.append({"role": role, "content": content})
+    return normalized_messages
+
+
+input_data = load_input_data()
+if len(input_data) == 0:
+    raise ValueError("No input examples selected after applying start/end.")
+
+
+def encode_sft_example(example):
+    """
+    Encode a single ChatML example for SFT.
+    The input example is expected to contain a messages list, where each message
+    includes role/content fields.
+    """
+    messages = normalize_messages(example)
     input_ids = tokenizer.apply_chat_template(
         conversation=messages,
         tokenize=True,
@@ -90,17 +212,14 @@ def encode_sft_example(example, verbose=False):
         add_generation_prompt=False,
     )
     labels = input_ids.clone()
-    # mask the non-assistant part for avoiding loss
+    # Mask all non-assistant segments so GEM/CE only trains on assistant responses.
     for message_idx, message in enumerate(messages):
         if message["role"] != "assistant":
-            # we calculate the start index of this non-assistant message
             if message_idx == 0:
                 message_start_idx = 0
             else:
                 message_start_idx = tokenizer.apply_chat_template(
-                    conversation=messages[
-                        :message_idx
-                    ],  # here marks the end of the previous messages
+                    conversation=messages[:message_idx],
                     tokenize=True,
                     return_tensors="pt",
                     padding=False,
@@ -108,14 +227,10 @@ def encode_sft_example(example, verbose=False):
                     max_length=max_seq_length,
                     add_generation_prompt=False,
                 ).shape[1]
-            # next, we calculate the end index of this non-assistant message
             if (
                 message_idx < len(messages) - 1
                 and messages[message_idx + 1]["role"] == "assistant"
             ):
-                # for intermediate messages that follow with an assistant message, we need to
-                # set `add_generation_prompt=True` to avoid the assistant generation prefix being included in the loss
-                # (e.g., `<|assistant|>`)
                 message_end_idx = tokenizer.apply_chat_template(
                     conversation=messages[: message_idx + 1],
                     tokenize=True,
@@ -126,8 +241,6 @@ def encode_sft_example(example, verbose=False):
                     add_generation_prompt=True,
                 ).shape[1]
             else:
-                # for the last message or the message that doesn't follow with an assistant message,
-                # we don't need to add the assistant generation prefix
                 message_end_idx = tokenizer.apply_chat_template(
                     conversation=messages[: message_idx + 1],
                     tokenize=True,
@@ -137,7 +250,6 @@ def encode_sft_example(example, verbose=False):
                     max_length=max_seq_length,
                     add_generation_prompt=False,
                 ).shape[1]
-            # set the label to -100 for the non-assistant part
             labels[:, message_start_idx:message_end_idx] = -100
             if max_seq_length and message_end_idx >= max_seq_length:
                 break
@@ -149,15 +261,33 @@ def encode_sft_example(example, verbose=False):
     }
 
 
-print(encode_sft_example(input_data[0], verbose=True))
+progress_bar = tqdm(total=len(input_data), desc="tokenizing")
+os.makedirs(os.path.dirname(args.output_file) or ".", exist_ok=True)
+num_examples = 0
+first_example = None
+with open(args.output_file, "w", encoding="utf-8") as output_writer:
+    if args.preprocessing_num_workers <= 1:
+        iterator = (encode_sft_example(example) for example in input_data)
+    else:
+        process_pool = Pool(args.preprocessing_num_workers)
+        iterator = process_pool.imap(encode_sft_example, input_data)
+    try:
+        for tokenized_example in iterator:
+            if first_example is None:
+                first_example = tokenized_example
+            output_writer.write(json.dumps(tokenized_example) + "\n")
+            num_examples += 1
+            progress_bar.update(1)
+    finally:
+        if args.preprocessing_num_workers > 1:
+            process_pool.close()
+            process_pool.join()
+        progress_bar.close()
 
-tokenized_data = []
-with Pool(args.preprocessing_num_workers) as p:
-    pbar = tqdm(input_data, desc=f"tokenizing")
-    for tokenized_example in p.imap(encode_sft_example, pbar):
-        dump = json.dumps(tokenized_example)
-        tokenized_data.append(dump)
-
-with open(args.output_file, "w") as fw:
-    for dump in tokenized_data:
-        fw.write(dump + "\n")
+assistant_tokens = sum(token != -100 for token in first_example["labels"])
+print(
+    f"save tokenized data to {args.output_file} done. "
+    f"num_examples={num_examples}, "
+    f"first_example_total_tokens={len(first_example['input_ids'])}, "
+    f"first_example_assistant_tokens={assistant_tokens}"
+)
