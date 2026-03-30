@@ -10,6 +10,7 @@ import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 import sys
+import inspect
 from typing import Optional
 from functools import partial
 import datasets
@@ -154,7 +155,42 @@ def main():
             json_file=os.path.abspath(sys.argv[1])
         )
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        # Different transformers versions expose slightly different CLI field names
+        # (for example eval_strategy vs evaluation_strategy). Normalize a few common
+        # aliases so the training scripts remain portable across environments.
+        normalized_argv = [sys.argv[0]]
+        parser_signature = inspect.signature(parser.parse_args_into_dataclasses)
+        supports_return_remaining = (
+            "return_remaining_strings" in parser_signature.parameters
+        )
+        arg_aliases = {
+            "--evaluation_strategy": "--eval_strategy",
+        }
+        skip_flags = {"--overwrite_output_dir"}
+        argv_iter = iter(sys.argv[1:])
+        for arg in argv_iter:
+            normalized_arg = arg_aliases.get(arg, arg)
+            if normalized_arg in skip_flags:
+                continue
+            normalized_argv.append(normalized_arg)
+        if supports_return_remaining:
+            model_args, data_args, training_args, remaining_args = (
+                parser.parse_args_into_dataclasses(
+                    args=normalized_argv[1:],
+                    return_remaining_strings=True,
+                )
+            )
+            if remaining_args:
+                raise ValueError(
+                    "Some specified arguments are not used by the HfArgumentParser: "
+                    f"{remaining_args}"
+                )
+            training_args.overwrite_output_dir = "--overwrite_output_dir" in sys.argv[1:]
+        else:
+            model_args, data_args, training_args = parser.parse_args_into_dataclasses(
+                args=normalized_argv[1:]
+            )
+            training_args.overwrite_output_dir = "--overwrite_output_dir" in sys.argv[1:]
 
     # Setup logging
     logging.basicConfig(
